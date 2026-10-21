@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageChops, ImageFilter
+from PIL import Image, ImageFilter
 import pillow_heif
 from rembg import remove, new_session
 
@@ -18,8 +18,6 @@ DETAIL_MAX_BYTES = 130 * 1024
 QUALITY_START = 88
 QUALITY_FLOOR = 30
 TARGET_BOX = (1120, 1056)
-DETAIL_BOX = (CANVAS, CANVAS)
-BG_THRESHOLD = 248
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 
 
@@ -56,23 +54,12 @@ def convert(sources: list[Path]) -> list[Path]:
 
 # --- step 2: process (center, white canvas, rename, compress) ---------------
 
-def bounding_box(img: Image.Image) -> tuple[int, int, int, int] | None:
-    r, g, b = img.convert("RGB").split()
-    min_channel = ImageChops.darker(ImageChops.darker(r, g), b)
-    mask = min_channel.point(lambda v: 255 if v < BG_THRESHOLD else 0)
-    return mask.getbbox()
-
-
 def prepare(img: Image.Image) -> Image.Image:
     if img.mode in ("RGBA", "LA", "P"):
         img = img.convert("RGBA")
         white = Image.new("RGBA", img.size, (255, 255, 255, 255))
         img = Image.alpha_composite(white, img)
-    img = img.convert("RGB")
-    bbox = bounding_box(img)
-    if bbox:
-        img = img.crop(bbox)
-    return img
+    return img.convert("RGB")
 
 
 def detect_color(img: Image.Image) -> str:
@@ -123,14 +110,6 @@ def detect_color(img: Image.Image) -> str:
     if 300 <= h_mean < 340:
         return "pink"
     return "red" if s_med > 0.40 else "brown"
-
-
-def dense_bbox(alpha: np.ndarray) -> tuple[int, int, int, int]:
-    cols = (alpha > 64).sum(axis=0)
-    rows = (alpha > 64).sum(axis=1)
-    xs = np.where(cols >= cols.max() * 0.2)[0]
-    ys = np.where(rows >= rows.max() * 0.2)[0]
-    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
 
 
 def compose(img: Image.Image, session) -> tuple[Image.Image, str, bool]:
