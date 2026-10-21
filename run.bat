@@ -7,7 +7,7 @@ echo ===============================
 echo   Image Processing
 echo ===============================
 echo   1. Convert images to WebP only
-echo   2. Process images (center, 1200x1200, white bg, max 100KB, color naming)
+echo   2. Process images (center, white bg, color naming, size limits from settings.json)
 echo   3. Full pipeline (convert + process)
 echo   4. Exit
 echo ===============================
