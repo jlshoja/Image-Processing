@@ -1,7 +1,9 @@
 import json
 import os
 import re
+import shutil
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +11,6 @@ import openpyxl
 from openpyxl import Workbook
 from PIL import Image, ImageFilter
 import pillow_heif
-from rembg import remove, new_session
 
 pillow_heif.register_heif_opener()
 
@@ -76,14 +77,14 @@ CANVAS = CANVAS_CFG["size"]
 TARGET_BOX = tuple(CANVAS_CFG["target_box"])
 OBJECT_PADDING = CANVAS_CFG["object_padding"]
 MIN_FOREGROUND = CANVAS_CFG["min_foreground_ratio"]
+BG_WHITE = CANVAS_CFG["background_threshold"]
+BACKGROUND_RATIO_LIMIT = CANVAS_CFG["background_ratio"]
 MAX_BYTES = ENCODING["max_bytes"]
-DETAIL_MAX_BYTES = ENCODING["detail_max_bytes"]
 QUALITY_START = ENCODING["quality_start"]
 QUALITY_FLOOR = ENCODING["quality_floor"]
 QUALITY_STEP = ENCODING["quality_step"]
 WEBP_METHOD = ENCODING["method"]
-CONVERT_QUALITY = ENCODING["convert_quality"]
-BLUR_QUALITY = ENCODING["blur_quality"]
+CONVERT_MAX_SIDE = ENCODING["convert_max_side"]
 BLUR_RADII = ENCODING["blur_radii"]
 MODEL = DETECTION["model"]
 ALPHA_MIN = DETECTION["alpha_threshold"]
@@ -449,19 +450,16 @@ def prepare(img: Image.Image) -> Image.Image:
     return img.convert("RGB")
 
 
-def compose(
+def _finish(
     img: Image.Image,
-    session,
-    allowed: list[tuple[str, tuple | None]] | None = None,
+    mask: np.ndarray,
+    cut: Image.Image | None,
+    allowed: list[tuple[str, tuple | None]],
 ) -> tuple[Image.Image, str, bool, str, str]:
-    img = prepare(img)
-    cut = remove(img.convert("RGBA"), session=session)
-    alpha = np.asarray(cut.getchannel("A"))
-    mask = alpha > ALPHA_MIN
     ys, xs = np.where(mask)
     if len(xs) == 0:
         raise ValueError("no object detected")
-    h, w = alpha.shape
+    h, w = mask.shape
     coverage = float(mask.mean())
     bbox = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
     touches_border = (
@@ -478,13 +476,8 @@ def compose(
         crop = img.crop((x0, y0, x0 + side, y0 + side)).resize(
             (CANVAS, CANVAS), Image.LANCZOS
         )
-        if unreliable:
-            color_img = img
-        else:
-            color_img = Image.alpha_composite(
-                Image.new("RGBA", img.size, (255, 255, 255, 255)), cut
-            ).convert("RGB")
-        color, detected, _, hexcode = pick_color(color_img, allowed or [])
+        color_img = img
+        color, detected, _, hexcode = pick_color(color_img, allowed)
         return crop, color, True, detected, hexcode
     obj_w, obj_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     pad = int(OBJECT_PADDING * max(obj_w, obj_h))
@@ -496,66 +489,116 @@ def compose(
     crop.thumbnail(TARGET_BOX, Image.LANCZOS)
     canvas = Image.new("RGB", (CANVAS, CANVAS), (255, 255, 255))
     canvas.paste(crop, ((CANVAS - crop.width) // 2, (CANVAS - crop.height) // 2))
-    color_img = Image.alpha_composite(
-        Image.new("RGBA", (x1 - x0, y1 - y0), (255, 255, 255, 255)), cut.crop((x0, y0, x1, y1))
-    ).convert("RGB")
-    color, detected, _, hexcode = pick_color(color_img, allowed or [])
+    if cut is None:
+        color_img = img.crop((x0, y0, x1, y1))
+    else:
+        color_img = Image.alpha_composite(
+            Image.new("RGBA", (x1 - x0, y1 - y0), (255, 255, 255, 255)), cut.crop((x0, y0, x1, y1))
+        ).convert("RGB")
+    color, detected, _, hexcode = pick_color(color_img, allowed)
     return canvas, color, False, detected, hexcode
 
 
-def encode(
-    canvas: Image.Image,
-    dest: Path,
-    allow_blur: bool = True,
-    max_bytes: int = MAX_BYTES,
-) -> int:
-    def attempt(im: Image.Image, start: int) -> int | None:
-        quality = start
-        while quality >= QUALITY_FLOOR:
-            im.save(dest, format="WEBP", quality=quality, method=WEBP_METHOD)
-            if dest.stat().st_size <= max_bytes:
-                return quality
-            quality -= QUALITY_STEP
-        return None
+def compose(
+    img: Image.Image,
+    ctx: dict | None,
+    allowed: list[tuple[str, tuple | None]] | None = None,
+) -> tuple[Image.Image, str, bool, str, str]:
+    img = prepare(img)
+    rgb = np.asarray(img, dtype=np.float32)
+    foreground = rgb.max(axis=2) < BG_WHITE
+    allowed = allowed or []
+    if float(foreground.mean()) < BACKGROUND_RATIO_LIMIT:
+        # busy background: the threshold mask is not trustworthy, use the AI model
+        if ctx is None:
+            ctx = {}
+        cut = remove(img.convert("RGBA"), session=_get_session(ctx))
+        mask = np.asarray(cut.getchannel("A")) > ALPHA_MIN
+        return _finish(img, mask, cut, allowed)
+    return _finish(img, foreground, None, allowed)
 
-    quality = attempt(canvas, QUALITY_START)
+
+def encode(canvas: Image.Image, dest: Path, quality: int | None = None) -> int:
+    quality = quality or QUALITY_START
+    canvas.save(dest, format="WEBP", quality=quality, method=WEBP_METHOD)
+    return quality
+
+
+def compress(
+    img: Image.Image,
+    dest: Path,
+    max_bytes: int = MAX_BYTES,
+    allow_blur: bool = True,
+) -> int:
+    def encode_at(im: Image.Image, quality: int) -> int:
+        im.save(dest, format="WEBP", quality=quality, method=WEBP_METHOD)
+        return dest.stat().st_size
+
+    # one save is enough in the common case: start quality already fits
+    if encode_at(img, QUALITY_START) <= max_bytes:
+        return QUALITY_START
+
+    def search(im: Image.Image) -> int | None:
+        lo, hi = QUALITY_FLOOR, QUALITY_START - QUALITY_STEP
+        best = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            size = encode_at(im, mid)
+            if size <= max_bytes:
+                best = mid
+                lo = mid + QUALITY_STEP
+            else:
+                hi = mid - QUALITY_STEP
+        return best
+
+    quality = search(img)
     if quality is not None:
         return quality
     if allow_blur:
         for radius in BLUR_RADII:
-            quality = attempt(canvas.filter(ImageFilter.GaussianBlur(radius)), BLUR_QUALITY)
+            quality = search(img.filter(ImageFilter.GaussianBlur(radius)))
             if quality is not None:
                 return quality
     return QUALITY_FLOOR - QUALITY_STEP
 
 
-# --- step 1: convert to webp -------------------------------------------------
+# --- step 1: convert to webp under the size limit ----------------------------
 
-def convert_file(src: Path, dest: Path) -> None:
-    img = Image.open(src)
-    img = prepare(img)
-    img.save(dest, format="WEBP", quality=CONVERT_QUALITY, method=WEBP_METHOD)
+def convert_file(src: Path, dest: Path) -> tuple[int, str, float]:
+    started = time.perf_counter()
+    if src.suffix.lower() == ".webp" and src.stat().st_size <= MAX_BYTES:
+        shutil.copyfile(src, dest)
+        return QUALITY_START, "copied", time.perf_counter() - started
+    img = prepare(Image.open(src))
+    if CONVERT_MAX_SIDE and max(img.size) > CONVERT_MAX_SIDE:
+        img.thumbnail((CONVERT_MAX_SIDE, CONVERT_MAX_SIDE), Image.LANCZOS)
+    quality = compress(img, dest, MAX_BYTES)
+    return quality, "compressed", time.perf_counter() - started
 
 
 def convert(sources: list[Path]) -> list[Path]:
     converted = []
     total = len(sources)
+    started = time.perf_counter()
+    print(
+        f"found {total} source file(s) in {ROOT}  ->  {CONVERT_ROOT}", flush=True
+    )
     for i, src in enumerate(sources, 1):
         pct = i / total * 100 if total else 100
-        if src.suffix.lower() == ".webp":
-            converted.append(src)
-            continue
         rel = src.relative_to(ROOT)
         dest = (CONVERT_ROOT / rel.parent / f"{src.stem}.webp").resolve()
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if not dest.exists():
-            convert_file(src, dest)
-            kb = dest.stat().st_size / 1024
-            print(
-                f"[{i}/{total} {pct:.0f}%] convert: {rel} -> "
-                f"converted/{rel.parent / (src.stem + '.webp')}  {kb:.1f} KB"
-            )
+        if dest.exists():
+            converted.append(dest)
+            continue
+        quality, mode, seconds = convert_file(src, dest)
         converted.append(dest)
+        kb = dest.stat().st_size / 1024
+        print(
+            f"[{i}/{total} {pct:.0f}%] convert: {rel} -> "
+            f"converted/{rel.parent / (src.stem + '.webp')}  {kb:.1f} KB  "
+            f"q={quality}  {mode}  {seconds:.1f} s"
+        )
     print(f"[100%] convert: {total} file(s) checked.\n")
     return converted
 
@@ -642,7 +685,8 @@ def write_color_report(records: list[dict], missing: list[tuple[str, str, str]])
 
 # --- step 2: process ---------------------------------------------------------
 
-def process(sources: list[Path], session=None) -> None:
+def process(sources: list[Path], ctx: dict | None = None) -> None:
+    ctx = ctx if ctx is not None else {}
     manifest = load_manifest()
     existing_stems = {
         Path(entry["output"]).stem
@@ -650,6 +694,11 @@ def process(sources: list[Path], session=None) -> None:
         if isinstance(entry, dict) and entry.get("output")
     }
     pending = [src for src in sorted(sources) if source_key(src) not in manifest]
+    print(
+        f"found {len(sources)} source file(s), "
+        f"{len(pending)} new image(s) to process "
+        f"({len(sources) - len(pending)} already in manifest)", flush=True
+    )
     if not pending:
         print("process: no new images.")
         records = [
@@ -668,7 +717,7 @@ def process(sources: list[Path], session=None) -> None:
                 f"({len(records)} image(s), {len(missing)} missing color(s))"
             )
         return
-    session = session or new_session(MODEL)
+    print("reading product database and color mapping...", flush=True)
     products = load_products()
     total = len(pending)
     announced = set()
@@ -688,7 +737,7 @@ def process(sources: list[Path], session=None) -> None:
             no_colors.append((folder, "", reason))
             announced.add(folder)
         canvas, color, is_detail, detected, hexcode = compose(
-            Image.open(src), session, allowed
+            Image.open(src), ctx, allowed
         )
         seq = 1
         if is_featured(src):
@@ -703,12 +752,7 @@ def process(sources: list[Path], session=None) -> None:
                 seq += 1
         dest = OUTPUT_ROOT / folder / f"{out}.webp"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        quality = encode(
-            canvas,
-            dest,
-            allow_blur=not is_detail,
-            max_bytes=DETAIL_MAX_BYTES if is_detail else MAX_BYTES,
-        )
+        quality = encode(canvas, dest)
         manifest[source_key(src)] = {
             "output": dest.relative_to(OUTPUT_ROOT).as_posix(),
             "code": folder,
@@ -736,6 +780,28 @@ def process(sources: list[Path], session=None) -> None:
     )
     print("[100%] process: all images done.")
     save_manifest(manifest)
+
+
+def _get_session(ctx: dict):
+    if ctx.get("session") is None:
+        ctx["session"] = _new_session(MODEL)
+    return ctx["session"]
+
+
+def _new_session(model: str):
+    from rembg import new_session
+
+    started = time.perf_counter()
+    print(f"busy background detected, loading AI model '{model}'...")
+    session = new_session(model)
+    print(f"model ready in {time.perf_counter() - started:.1f} s")
+    return session
+
+
+def remove(**kwargs):
+    from rembg import remove as _remove
+
+    return _remove(**kwargs)
 
 
 # --- runner ------------------------------------------------------------------
@@ -770,11 +836,12 @@ def main() -> None:
     if mode not in ("convert", "process", "full"):
         print("Usage: python process_images.py [convert|process|full]")
         print(f"  settings: {SETTINGS_FILE}")
-        print("  convert - step 1 only: convert all sources to webp -> converted/<folder>/")
-        print(f"  process - step 2 only: center, white bg, {CANVAS}x{CANVAS}, size limit, color name")
+        print(f"  convert - step 1 only: convert all sources to webp under {MAX_BYTES // 1024} KB, keeping original names/folders")
+        print(f"  process - step 2 only: center, white bg, {CANVAS}x{CANVAS}, color name (no size limit)")
         print("            (color is matched against the product color list in the database)")
         print("  full    - step 1 + step 2 (converts, then processes the converted files)")
         return
+    print(f"settings: {SETTINGS_FILE}", flush=True)
     if mode == "convert":
         n = len(run_convert())
         print(f"\n{n} file(s) ensured as webp in {CONVERT_ROOT.name}/.")

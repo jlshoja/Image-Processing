@@ -27,17 +27,17 @@
     "size": 1200,
     "target_box": [1120, 1056],
     "object_padding": 0.05,
-    "min_foreground_ratio": 0.08
+    "min_foreground_ratio": 0.08,
+    "background_threshold": 246,
+    "background_ratio": 0.85
   },
   "encoding": {
     "max_bytes": 102400,
-    "detail_max_bytes": 133120,
     "quality_start": 88,
     "quality_floor": 30,
     "quality_step": 2,
-    "method": 6,
-    "convert_quality": 95,
-    "blur_quality": 40,
+    "method": 4,
+    "convert_max_side": 1600,
     "blur_radii": [0.8, 1.1, 1.4, 1.7]
   },
   "detection": {

@@ -6,8 +6,8 @@ cls
 echo ===============================
 echo   Image Processing
 echo ===============================
-echo   1. Convert images to WebP only
-echo   2. Process images (center, white bg, color naming, size limits from settings.json)
+echo   1. Convert + compress to WebP under limit (keeps original names)
+echo   2. Process images (center, white bg, color naming - no size limit)
 echo   3. Full pipeline (convert + process)
 echo   4. Exit
 echo ===============================
