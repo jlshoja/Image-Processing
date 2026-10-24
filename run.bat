@@ -7,14 +7,12 @@ echo ===============================
 echo   Image Processing
 echo ===============================
 echo   1. Convert + compress to WebP under limit (keeps original names)
-echo   2. Process images (center, white bg, color naming - no size limit)
-echo   3. Full pipeline (convert + process)
-echo   4. Exit
+echo   2. Rename photoroom images by color (to "final image renamed")
+echo   3. Exit
 echo ===============================
-choice /c 1234 /n /m "Choose option: "
+choice /c 123 /n /m "Choose option: "
 
-if errorlevel 4 goto end
-if errorlevel 3 goto full
+if errorlevel 3 goto end
 if errorlevel 2 goto process
 if errorlevel 1 goto convert
 
@@ -26,12 +24,6 @@ goto menu
 
 :process
 python process_images.py process
-echo.
-pause
-goto menu
-
-:full
-python process_images.py full
 echo.
 pause
 goto menu

@@ -1,12 +1,13 @@
 {
   "paths": {
-    "source_dir": "Product images",
+    "source_dir": "Product images raw",
     "converted_dir": "converted",
-    "output_dir": "processed",
+    "photoroom_dir": "Product images photoroom",
+    "output_dir": "final image renamed",
     "color_report": "color.xlsx",
     "manifest": "manifest.json",
-    "product_db": "E:\\Luxbaz\\All Codes\\Projects\\01-New_Luxbaz_Product\\Product scraping and Import bulider\\Product Database - filled.xlsx",
-    "color_map": "E:\\Luxbaz\\All Codes\\Projects\\01-New_Luxbaz_Product\\Product scraping and Import bulider\\color_mapping.xlsx"
+    "product_db": "Product Database .xlsx",
+    "color_map": "color_mapping.xlsx"
   },
   "files": {
     "supported_extensions": [
@@ -20,30 +21,33 @@
       ".heic",
       ".heif"
     ],
-    "featured_keywords": ["main", "featured", "hero", "primary"],
+    "featured_keywords": [
+      "main",
+      "featured",
+      "hero",
+      "primary"
+    ],
     "featured_suffix": "main"
-  },
-  "canvas": {
-    "size": 1200,
-    "target_box": [1120, 1056],
-    "object_padding": 0.05,
-    "min_foreground_ratio": 0.08,
-    "background_threshold": 246,
-    "background_ratio": 0.85
   },
   "encoding": {
     "max_bytes": 102400,
     "quality_start": 88,
     "quality_floor": 30,
-    "quality_step": 2,
     "method": 4,
     "convert_max_side": 1600,
-    "blur_radii": [0.8, 1.1, 1.4, 1.7]
+    "blur_radii": [
+      0.8,
+      1.1,
+      1.4,
+      1.7
+    ]
   },
-  "detection": {
-    "model": "u2net",
-    "alpha_threshold": 64,
-    "border_tolerance": 1
+  "color_detection": {
+    "max_side": 400,
+    "alpha_threshold": 128,
+    "background_tolerance": 12,
+    "cluster_distance": 7,
+    "assignment_penalty": 15
   },
   "database": {
     "sheet": null,
@@ -125,7 +129,7 @@
     "yellow": "#EBCD32",
     "gold": "#D4AF37",
     "copper": "#B87333",
-    "green": "#3C8246",
+    "green": ["#6E7B4B", "#3C8246"],
     "sage": "#96AA82",
     "pistachio": "#A0BE6E",
     "olive": "#6E6E32",
@@ -138,13 +142,28 @@
     "navy": "#192350",
     "purple": "#783C96",
     "lilac": "#C8A2C8",
-    "violet": "#8C50B4"
+    "violet": "#8C50B4",
+    "walnut": "#5A3E2B",
+    "mocha": "#6F4E37",
+    "cafe-au-lait": "#A67B5B"
   },
   "color_modifiers": {
-    "light": {"mix": "#FFFFFF", "amount": 0.35},
-    "dark": {"mix": "#000000", "amount": 0.35},
-    "dusty": {"mix": "#969696", "amount": 0.5},
-    "stone": {"mix": "#969696", "amount": 0.5}
+    "light": {
+      "mix": "#FFFFFF",
+      "amount": 0.35
+    },
+    "dark": {
+      "mix": "#000000",
+      "amount": 0.35
+    },
+    "dusty": {
+      "mix": "#969696",
+      "amount": 0.5
+    },
+    "stone": {
+      "mix": "#969696",
+      "amount": 0.5
+    }
   },
   "color_families": {
     "primary": [
@@ -191,7 +210,12 @@
       "ivory",
       "sky"
     ],
-    "modifiers": ["light", "dark", "dusty", "burnt"],
+    "modifiers": [
+      "light",
+      "dark",
+      "dusty",
+      "burnt"
+    ],
     "synonyms": {
       "navy-blue": "navy",
       "off-white": "white",
@@ -203,15 +227,46 @@
       "snake-skin": "black",
       "vizon": "brown",
       "mink": "brown",
-      "magenta": "pink"
+      "magenta": "pink",
+      "cafe-au-lait-nescafe": "cafe-au-lait"
     }
   },
   "color_space": {
-    "white_point": [0.95047, 1.0, 1.08883],
+    "white_point": [
+      0.95047,
+      1.0,
+      1.08883
+    ],
     "rgb_to_xyz": [
-      [0.4124, 0.3576, 0.1805],
-      [0.2126, 0.7152, 0.0722],
-      [0.0193, 0.1192, 0.9505]
+      [
+        0.4124,
+        0.3576,
+        0.1805
+      ],
+      [
+        0.2126,
+        0.7152,
+        0.0722
+      ],
+      [
+        0.0193,
+        0.1192,
+        0.9505
+      ]
     ]
+  },
+  "color_matching": {
+    "neutral_chroma": 3.0,
+    "neutral_saturation": 0.1,
+    "neutral_ref_saturation": 0.15,
+    "lightness_weight": 0.5,
+    "hue_weight": 0.4,
+    "saturation_weight": 0.1,
+    "neutral_mismatch_penalty": 6.0,
+    "identity_hue_weight": 0.5,
+    "identity_saturation_weight": 0.4,
+    "identity_lightness_weight": 0.5,
+    "neutral_penalty_per_chroma": 6.0,
+    "max_hue_penalty": 90.0
   }
 }

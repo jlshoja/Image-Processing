@@ -4,4 +4,19 @@ __pycache__/
 .venv/
 venv/
 converted/
+final image renamed/
 color.xlsx
+settings.local.json
+Product images/
+Product images raw/
+Product images photoroom/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+*.heif
+*.gif
+*.bmp
+*.tif
+*.tiff
